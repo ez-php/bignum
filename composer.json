@@ -1,6 +1,6 @@
 {
   "name": "ez-php/bignum",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Arbitrary-precision integer and decimal arithmetic for the ez-php ecosystem — immutable BigInteger and BigDecimal value objects backed by bcmath (gmp optional)",
   "type": "library",
   "license": "MIT",
