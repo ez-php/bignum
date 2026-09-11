@@ -28,6 +28,7 @@ docker compose exec app composer full
 Executes in order:
 1. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
 2. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+   *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
 3. `phpunit` — all tests with coverage
 
 Individual commands when needed:
@@ -93,6 +94,11 @@ Every module under `modules/<name>/` must have:
 | `phpunit.xml` | test suite config |
 | `.php-cs-fixer.php` | code style config |
 | `.gitignore` | ignore `vendor/`, `.env`, cache |
+| `.env.example` | environment variable defaults (copy to `.env` on first run) |
+| `docker-compose.yml` | Docker Compose service definition (always `container_name: ez-php-<name>-app`) |
+| `docker/app/Dockerfile` | module Docker image (`FROM au9500/php:8.5`) |
+| `docker/app/container-start.sh` | container entrypoint: `composer install` → `sleep infinity` |
+| `docker/app/php.ini` | PHP ini overrides (`memory_limit`, `display_errors`, `xdebug.mode`) |
 | `.github/workflows/ci.yml` | standalone CI pipeline |
 | `README.md` | public documentation |
 | `tests/TestCase.php` | base test case for the module |
