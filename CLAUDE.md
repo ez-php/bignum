@@ -129,6 +129,14 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
+Pass `--services` to merge MySQL/Redis service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+
+```
+vendor/bin/docker-init --services=mysql
+vendor/bin/docker-init --services=redis
+vendor/bin/docker-init --services=mysql,redis
+```
+
 After scaffolding:
 
 1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis) as needed
@@ -182,6 +190,7 @@ tests/
   RoundingModeTest.php        — Enum case assertions
   Backend/
     GmpBackendTest.php        — GmpBackend tests (requires ext-gmp)
+    BcMathBackendTest.php     — BcMathBackend tests (requires ext-bcmath)
 ```
 
 ---
@@ -265,6 +274,7 @@ Pure enum with no methods. Seven cases as defined by standard decimal rounding c
 - **No external infrastructure required** — All tests are in-process, pure PHP. No database, no Redis, no Docker needed to run the test suite locally via `vendor/bin/phpunit`.
 - **Force bcmath in BigInteger tests** — Each `BigIntegerTest` calls `BigInteger::setDefaultBackend(new BcMathBackend())` in `setUp()` to avoid non-determinism from auto-detected backends.
 - **GmpBackend tested separately** — `tests/Backend/GmpBackendTest.php` carries `#[RequiresPhpExtension('gmp')]` and is skipped automatically when GMP is not installed.
+- **BcMathBackend tested both directly and indirectly** — `tests/Backend/BcMathBackendTest.php` exercises the backend's own methods in isolation (mirroring `GmpBackendTest`'s cases, plus a negative-operand `gcd()` case specific to bcmath's absolute-value-then-Euclidean-algorithm implementation), in addition to the indirect coverage every `BigIntegerTest` already gets by forcing `setDefaultBackend(new BcMathBackend())`.
 - **Rounding mode coverage** — `BigDecimalTest::testRoundingModes()` uses a data provider covering all seven modes for both positive and negative inputs, including the HALF_EVEN (banker's rounding) edge cases.
 - **Immutability** — Each test that chains operations also asserts the original instance is unchanged.
 - **`#[UsesClass]`** — Required because PHPUnit is configured with `beStrictAboutCoverageMetadata=false` globally, but individual modules may tighten this. Declare all indirectly used classes.
