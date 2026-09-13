@@ -24,7 +24,7 @@
     "ext-bcmath": "Alternative integer arithmetic backend (BcMathBackend)"
   },
   "require-dev": {
-    "ez-php/docker": "^1.0",
+    "ez-php/docker": "^2.0",
     "phpunit/phpunit": "^13.0",
     "phpstan/phpstan": "^2.1",
     "friendsofphp/php-cs-fixer": "^3.94",
