@@ -2,7 +2,7 @@
 
 Arbitrary-precision integer and decimal arithmetic for PHP 8.5+.
 
-Provides immutable `BigInteger` and `BigDecimal` value objects backed by PHP's built-in `bcmath` extension — no external Composer dependencies, no PECL extensions required. Optionally uses `gmp` as a faster backend for integer operations.
+Provides immutable `BigInteger` and `BigDecimal` value objects backed by PHP's `bcmath` extension — no external Composer dependencies. Both classes share a pluggable `IntegerBackend` that prefers `gmp` (faster) and falls back to `bcmath` automatically when `gmp` isn't loaded.
 
 ## Installation
 
@@ -10,7 +10,7 @@ Provides immutable `BigInteger` and `BigDecimal` value objects backed by PHP's b
 composer require ez-php/bignum
 ```
 
-Requires `ext-bcmath` (ships with PHP). Optionally install `ext-gmp` for faster `BigInteger` arithmetic.
+Requires `ext-bcmath`. Optionally install `ext-gmp` for faster arithmetic — it's auto-selected when loaded (see [Backend Selection](#backend-selection)). Neither extension ships with PHP by default; both need `--enable-bcmath` / `--with-gmp` at build time or the matching OS package. See [Docker](#docker) below for a copy-pasteable install snippet.
 
 ## Quick Start
 
@@ -91,7 +91,13 @@ BigDecimal::one(): self
 ->divide(BigDecimal|BigInteger|int|string $divisor): self       // integer division (scale 0)
 ->dividedBy($divisor, int $scale, RoundingMode $mode): self     // explicit scale + rounding
 ->mod(BigDecimal|BigInteger|int|string $divisor): self
-->pow(int $exponent): self
+->pow(int $exponent): self                                      // exponent >= 0
+->sqrt(int $scale, RoundingMode $mode = HALF_UP): self          // requires a non-negative value
+->nthRoot(int $n, int $scale, RoundingMode $mode = HALF_UP): self          // requires a non-negative value; n >= 1
+->powRational(int $numerator, int $denominator, int $scale, RoundingMode $mode = HALF_UP): self
+                                                                 // this ** (numerator/denominator), via nthRoot(denominator) of pow(numerator);
+                                                                 // exact (no rounding) when denominator divides numerator; requires a
+                                                                 // non-negative value unless the fraction reduces to an integer exponent
 ->abs(): self
 ->negate(): self
 
@@ -110,6 +116,10 @@ BigDecimal::one(): self
 ->toString(): string
 ->toBigInteger(): BigInteger
 ->toScientific(): string // e.g. "1.23456E+2"
+
+// Backend management (see Backend Selection below)
+BigDecimal::setDefaultBackend(IntegerBackend $backend): void
+BigDecimal::getDefaultBackend(): IntegerBackend
 ```
 
 ### RoundingMode
@@ -130,12 +140,10 @@ Thrown by `divide`, `dividedBy`, and `mod` when the divisor is zero. Extends `\A
 
 ## Backend Selection
 
-`BigInteger` auto-selects the best available backend:
+Both `BigInteger` and `BigDecimal` auto-select the best available `IntegerBackend`, independently of each other:
 
 1. **GmpBackend** — used when `ext-gmp` is loaded (faster for large integers)
 2. **BcMathBackend** — always available fallback
-
-`BigDecimal` always uses bcmath directly (GMP does not support decimal arithmetic).
 
 To force a specific backend:
 
@@ -143,6 +151,20 @@ To force a specific backend:
 use EzPhp\BigNum\Backend\BcMathBackend;
 
 BigInteger::setDefaultBackend(new BcMathBackend());
+BigDecimal::setDefaultBackend(new BcMathBackend());
+```
+
+Each class holds its own default — forcing one does not affect the other.
+
+## Docker
+
+Neither `gmp` nor `bcmath` ships in a stock PHP image. Add these lines to your `Dockerfile` (taken from this monorepo's own root `docker/app/Dockerfile`, which builds both for the same reason):
+
+```dockerfile
+RUN apt-get update && apt-get install -y libgmp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN docker-php-ext-install bcmath gmp
 ```
 
 ## Design
@@ -150,7 +172,7 @@ BigInteger::setDefaultBackend(new BcMathBackend());
 - **Zero framework coupling** — usable standalone without bootstrapping the application
 - **Immutable** — all operations return new instances; the original is never modified
 - **No `mixed`** — all parameters and return values are strictly typed
-- **No external dependencies** — only `ext-bcmath` (required) and `ext-gmp` (optional)
+- **No external dependencies** — only `ext-bcmath` (required, always-available backend) and `ext-gmp` (optional, faster backend for both `BigInteger` and `BigDecimal`)
 
 ## License
 

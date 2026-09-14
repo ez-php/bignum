@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace EzPhp\BigNum;
 
+use EzPhp\BigNum\Backend\BcMathBackend;
+use EzPhp\BigNum\Backend\GmpBackend;
+use EzPhp\BigNum\Backend\IntegerBackend;
+
 /**
  * Immutable arbitrary-precision decimal value object.
  *
@@ -18,21 +22,26 @@ namespace EzPhp\BigNum;
  * All arithmetic operations return a new BigDecimal. Scale follows standard
  * rules (add/subtract → max scale; multiply → sum of scales).
  *
- * All internal arithmetic is performed via PHP's GMP extension on the integer
- * unscaled values. GMP is always available as a built-in PHP extension.
+ * All internal integer arithmetic on the unscaled value is delegated to an
+ * IntegerBackend (bcmath by default, gmp if available) — the same backend
+ * abstraction BigInteger uses.
  *
  * @see BigInteger for integer-only arithmetic
  * @see RoundingMode for rounding strategies
  */
 final class BigDecimal implements \Stringable
 {
+    private static ?IntegerBackend $defaultBackend = null;
+
     /**
-     * @param string $unscaledValue Normalized integer string (no leading zeros except "0")
-     * @param int    $scale         Non-negative number of decimal places
+     * @param string         $unscaledValue Normalized integer string (no leading zeros except "0")
+     * @param int            $scale         Non-negative number of decimal places
+     * @param IntegerBackend $backend       Arithmetic backend
      */
     private function __construct(
         private readonly string $unscaledValue,
         private readonly int $scale,
+        private readonly IntegerBackend $backend,
     ) {
     }
 
@@ -68,7 +77,7 @@ final class BigDecimal implements \Stringable
 
         [$unscaled, $scale] = self::parseDecimalString($str);
 
-        return new self($unscaled, $scale);
+        return new self($unscaled, $scale, self::resolveBackend());
     }
 
     /**
@@ -88,7 +97,7 @@ final class BigDecimal implements \Stringable
             throw new \InvalidArgumentException('Scale cannot be negative, got ' . $scale);
         }
 
-        return new self(self::normalizeUnscaled($unscaledValue), $scale);
+        return new self(self::normalizeUnscaled($unscaledValue), $scale, self::resolveBackend());
     }
 
     /**
@@ -96,7 +105,7 @@ final class BigDecimal implements \Stringable
      */
     public static function zero(): self
     {
-        return new self('0', 0);
+        return new self('0', 0, self::resolveBackend());
     }
 
     /**
@@ -104,7 +113,41 @@ final class BigDecimal implements \Stringable
      */
     public static function one(): self
     {
-        return new self('1', 0);
+        return new self('1', 0, self::resolveBackend());
+    }
+
+    // -------------------------------------------------------------------------
+    // Backend management
+    // -------------------------------------------------------------------------
+
+    /**
+     * Override the default backend for all subsequent BigDecimal instances.
+     *
+     * Useful for forcing bcmath or gmp in tests or specific contexts.
+     */
+    public static function setDefaultBackend(IntegerBackend $backend): void
+    {
+        self::$defaultBackend = $backend;
+    }
+
+    /**
+     * Return the default backend, auto-selecting gmp when available.
+     */
+    public static function getDefaultBackend(): IntegerBackend
+    {
+        return self::resolveBackend();
+    }
+
+    /**
+     * Resolve the default backend: gmp if available, otherwise bcmath.
+     */
+    private static function resolveBackend(): IntegerBackend
+    {
+        if (self::$defaultBackend === null) {
+            self::$defaultBackend = \extension_loaded('gmp') ? new GmpBackend() : new BcMathBackend();
+        }
+
+        return self::$defaultBackend;
     }
 
     // -------------------------------------------------------------------------
@@ -139,10 +182,10 @@ final class BigDecimal implements \Stringable
         $o = self::coerce($other);
         $maxScale = \max($this->scale, $o->scale);
 
-        $a = self::scaleUp($this->unscaledValue, $maxScale - $this->scale);
-        $b = self::scaleUp($o->unscaledValue, $maxScale - $o->scale);
+        $a = $this->scaleUp($this->unscaledValue, $maxScale - $this->scale);
+        $b = $this->scaleUp($o->unscaledValue, $maxScale - $o->scale);
 
-        return new self(self::normalizeUnscaled(\gmp_strval(\gmp_add($a, $b))), $maxScale);
+        return new self(self::normalizeUnscaled($this->backend->add($a, $b)), $maxScale, $this->backend);
     }
 
     /**
@@ -153,10 +196,10 @@ final class BigDecimal implements \Stringable
         $o = self::coerce($other);
         $maxScale = \max($this->scale, $o->scale);
 
-        $a = self::scaleUp($this->unscaledValue, $maxScale - $this->scale);
-        $b = self::scaleUp($o->unscaledValue, $maxScale - $o->scale);
+        $a = $this->scaleUp($this->unscaledValue, $maxScale - $this->scale);
+        $b = $this->scaleUp($o->unscaledValue, $maxScale - $o->scale);
 
-        return new self(self::normalizeUnscaled(\gmp_strval(\gmp_sub($a, $b))), $maxScale);
+        return new self(self::normalizeUnscaled($this->backend->subtract($a, $b)), $maxScale, $this->backend);
     }
 
     /**
@@ -168,8 +211,9 @@ final class BigDecimal implements \Stringable
         $scale = $this->scale + $o->scale;
 
         return new self(
-            self::normalizeUnscaled(\gmp_strval(\gmp_mul($this->unscaledValue, $o->unscaledValue))),
+            self::normalizeUnscaled($this->backend->multiply($this->unscaledValue, $o->unscaledValue)),
             $scale,
+            $this->backend,
         );
     }
 
@@ -213,23 +257,23 @@ final class BigDecimal implements \Stringable
         $exp = $scale + 1 + $d->scale - $this->scale;
 
         if ($exp >= 0) {
-            $numerator = \gmp_mul($this->unscaledValue, \gmp_pow('10', $exp));
-            $denominator = \gmp_init($d->unscaledValue);
+            $numerator = $this->backend->multiply($this->unscaledValue, $this->backend->pow('10', $exp));
+            $denominator = $d->unscaledValue;
         } else {
-            $numerator = \gmp_init($this->unscaledValue);
-            $denominator = \gmp_mul($d->unscaledValue, \gmp_pow('10', -$exp));
+            $numerator = $this->unscaledValue;
+            $denominator = $this->backend->multiply($d->unscaledValue, $this->backend->pow('10', -$exp));
         }
 
         // Truncated integer division (towards zero)
-        $quotient = \gmp_div_q($numerator, $denominator, GMP_ROUND_ZERO);
-        $isNegative = \gmp_cmp($quotient, '0') < 0;
-        $absQuotient = $isNegative ? \gmp_strval(\gmp_abs($quotient)) : \gmp_strval($quotient);
+        $quotient = $this->backend->divide($numerator, $denominator);
+        $isNegative = $this->backend->compare($quotient, '0') < 0;
+        $absQuotient = $this->backend->abs($quotient);
 
-        $roundedAbs = self::applyRounding($absQuotient, $isNegative, $roundingMode);
+        $roundedAbs = $this->applyRounding($absQuotient, $isNegative, $roundingMode);
 
         $finalUnscaled = ($isNegative && $roundedAbs !== '0') ? '-' . $roundedAbs : $roundedAbs;
 
-        return new self($finalUnscaled, $scale);
+        return new self($finalUnscaled, $scale, $this->backend);
     }
 
     /**
@@ -270,9 +314,110 @@ final class BigDecimal implements \Stringable
         }
 
         $newScale = $this->scale * $exponent;
-        $newUnscaled = \gmp_strval(\gmp_pow(\gmp_init($this->unscaledValue), $exponent));
+        $newUnscaled = $this->backend->pow($this->unscaledValue, $exponent);
 
-        return new self(self::normalizeUnscaled($newUnscaled), $newScale);
+        return new self(self::normalizeUnscaled($newUnscaled), $newScale, $this->backend);
+    }
+
+    /**
+     * Square root, rounded to the given scale.
+     *
+     * @throws \InvalidArgumentException if this value is negative or $scale is negative
+     */
+    public function sqrt(int $scale, RoundingMode $roundingMode = RoundingMode::HALF_UP): self
+    {
+        return $this->nthRoot(2, $scale, $roundingMode);
+    }
+
+    /**
+     * N-th root, rounded to the given scale.
+     *
+     * @throws \InvalidArgumentException if this value is negative, $n is less than 1, or $scale is negative
+     */
+    public function nthRoot(int $n, int $scale, RoundingMode $roundingMode = RoundingMode::HALF_UP): self
+    {
+        if ($n < 1) {
+            throw new \InvalidArgumentException('Root degree must be at least 1, got ' . $n);
+        }
+
+        if ($scale < 0) {
+            throw new \InvalidArgumentException('Scale cannot be negative, got ' . $scale);
+        }
+
+        if ($this->isNegative()) {
+            throw new \InvalidArgumentException('Cannot compute a root of a negative value');
+        }
+
+        if ($n === 1) {
+            return $this->toScale($scale, $roundingMode);
+        }
+
+        if ($this->isZero()) {
+            return new self('0', $scale, $this->backend);
+        }
+
+        // Root at a scale with at least one guard digit beyond the target
+        // ($scale + 1) and enough digits to represent this value exactly
+        // before rooting (ceil(this.scale / $n)) — the operand is only ever
+        // scaled *up*, never truncated down before the root is taken; only
+        // the final result is rounded, via the already-tested toScale().
+        $minIntermediateScale = \intdiv($this->scale + $n - 1, $n);
+        $intermediateScale = \max($scale + 1, $minIntermediateScale);
+        $targetExp = $n * $intermediateScale - $this->scale;
+
+        $operand = $targetExp === 0
+            ? $this->unscaledValue
+            : $this->backend->multiply($this->unscaledValue, $this->backend->pow('10', $targetExp));
+
+        $rootUnscaled = $this->integerNthRoot($operand, $n);
+
+        $intermediate = new self(self::normalizeUnscaled($rootUnscaled), $intermediateScale, $this->backend);
+
+        return $intermediate->toScale($scale, $roundingMode);
+    }
+
+    /**
+     * Raise this value to a rational power (numerator/denominator), rounded to the given scale.
+     *
+     * Computed as the $denominator-th root of `$this ** $numerator` — the
+     * fraction is reduced first, so an exact result (denominator divides
+     * numerator) is returned via the exact integer pow() without rounding.
+     *
+     * @throws \InvalidArgumentException if $numerator is negative, $denominator is less than 1,
+     *                                    $scale is negative, or this value is negative with a
+     *                                    non-integer exponent
+     */
+    public function powRational(
+        int $numerator,
+        int $denominator,
+        int $scale,
+        RoundingMode $roundingMode = RoundingMode::HALF_UP,
+    ): self {
+        if ($numerator < 0) {
+            throw new \InvalidArgumentException('Numerator must be non-negative, got ' . $numerator);
+        }
+
+        if ($denominator < 1) {
+            throw new \InvalidArgumentException('Denominator must be at least 1, got ' . $denominator);
+        }
+
+        if ($scale < 0) {
+            throw new \InvalidArgumentException('Scale cannot be negative, got ' . $scale);
+        }
+
+        $divisor = self::gcd($numerator, $denominator);
+        $reducedNumerator = \intdiv($numerator, $divisor);
+        $reducedDenominator = \intdiv($denominator, $divisor);
+
+        if ($reducedDenominator === 1) {
+            return $this->pow($reducedNumerator);
+        }
+
+        if ($this->isNegative()) {
+            throw new \InvalidArgumentException('Cannot compute a fractional power of a negative value');
+        }
+
+        return $this->pow($reducedNumerator)->nthRoot($reducedDenominator, $scale, $roundingMode);
     }
 
     /**
@@ -284,7 +429,7 @@ final class BigDecimal implements \Stringable
             return $this;
         }
 
-        return new self(\substr($this->unscaledValue, 1), $this->scale);
+        return new self(\substr($this->unscaledValue, 1), $this->scale, $this->backend);
     }
 
     /**
@@ -297,10 +442,10 @@ final class BigDecimal implements \Stringable
         }
 
         if (\str_starts_with($this->unscaledValue, '-')) {
-            return new self(\substr($this->unscaledValue, 1), $this->scale);
+            return new self(\substr($this->unscaledValue, 1), $this->scale, $this->backend);
         }
 
-        return new self('-' . $this->unscaledValue, $this->scale);
+        return new self('-' . $this->unscaledValue, $this->scale, $this->backend);
     }
 
     // -------------------------------------------------------------------------
@@ -335,9 +480,9 @@ final class BigDecimal implements \Stringable
 
         if ($scale > $this->scale) {
             $diff = $scale - $this->scale;
-            $newUnscaled = \gmp_strval(\gmp_mul($this->unscaledValue, \gmp_pow('10', $diff)));
+            $newUnscaled = $this->backend->multiply($this->unscaledValue, $this->backend->pow('10', $diff));
 
-            return new self($newUnscaled, $scale);
+            return new self($newUnscaled, $scale, $this->backend);
         }
 
         // Reduce scale with rounding: build an integer with 1 extra digit beyond
@@ -347,14 +492,14 @@ final class BigDecimal implements \Stringable
         $abs = $isNegative ? \substr($this->unscaledValue, 1) : $this->unscaledValue;
 
         // abs * 10 / 10^diff  →  1 extra digit for rounding
-        $dividend = \gmp_mul($abs, '10');
-        $divisor = \gmp_pow('10', $diff);
-        $withExtraDigit = \gmp_strval(\gmp_div_q($dividend, $divisor, GMP_ROUND_ZERO));
+        $dividend = $this->backend->multiply($abs, '10');
+        $divisor = $this->backend->pow('10', $diff);
+        $withExtraDigit = $this->backend->divide($dividend, $divisor);
 
-        $roundedAbs = self::applyRounding($withExtraDigit, $isNegative, $roundingMode);
+        $roundedAbs = $this->applyRounding($withExtraDigit, $isNegative, $roundingMode);
         $result = ($isNegative && $roundedAbs !== '0') ? '-' . $roundedAbs : $roundedAbs;
 
-        return new self($result, $scale);
+        return new self($result, $scale, $this->backend);
     }
 
     // -------------------------------------------------------------------------
@@ -369,20 +514,10 @@ final class BigDecimal implements \Stringable
         $o = self::coerce($other);
         $maxScale = \max($this->scale, $o->scale);
 
-        $a = self::scaleUp($this->unscaledValue, $maxScale - $this->scale);
-        $b = self::scaleUp($o->unscaledValue, $maxScale - $o->scale);
+        $a = $this->scaleUp($this->unscaledValue, $maxScale - $this->scale);
+        $b = $this->scaleUp($o->unscaledValue, $maxScale - $o->scale);
 
-        $cmp = \gmp_cmp($a, $b);
-
-        if ($cmp > 0) {
-            return 1;
-        }
-
-        if ($cmp < 0) {
-            return -1;
-        }
-
-        return 0;
+        return $this->backend->compare($a, $b);
     }
 
     /**
@@ -464,16 +599,12 @@ final class BigDecimal implements \Stringable
         if ($this->scale === 0) {
             $intStr = $this->unscaledValue;
         } else {
-            $intStr = \gmp_strval(\gmp_div_q(
-                \gmp_init($this->unscaledValue),
-                \gmp_pow('10', $this->scale),
-                GMP_ROUND_ZERO,
-            ));
+            $intStr = $this->backend->divide($this->unscaledValue, $this->backend->pow('10', $this->scale));
         }
 
         if (
-            \gmp_cmp($intStr, (string) \PHP_INT_MAX) > 0
-            || \gmp_cmp($intStr, (string) \PHP_INT_MIN) < 0
+            $this->backend->compare($intStr, (string) \PHP_INT_MAX) > 0
+            || $this->backend->compare($intStr, (string) \PHP_INT_MIN) < 0
         ) {
             throw new \OverflowException("Value {$this->unscaledValue} does not fit in a native int");
         }
@@ -511,11 +642,7 @@ final class BigDecimal implements \Stringable
             return BigInteger::of($this->unscaledValue);
         }
 
-        $intStr = \gmp_strval(\gmp_div_q(
-            \gmp_init($this->unscaledValue),
-            \gmp_pow('10', $this->scale),
-            GMP_ROUND_ZERO,
-        ));
+        $intStr = $this->backend->divide($this->unscaledValue, $this->backend->pow('10', $this->scale));
 
         return BigInteger::of($intStr);
     }
@@ -644,15 +771,15 @@ final class BigDecimal implements \Stringable
     }
 
     /**
-     * Multiply an unscaled integer by 10^$places using GMP.
+     * Multiply an unscaled integer by 10^$places using this instance's backend.
      */
-    private static function scaleUp(string $unscaled, int $places): string
+    private function scaleUp(string $unscaled, int $places): string
     {
         if ($places === 0) {
             return $unscaled;
         }
 
-        return \gmp_strval(\gmp_mul($unscaled, \gmp_pow('10', $places)));
+        return $this->backend->multiply($unscaled, $this->backend->pow('10', $places));
     }
 
     /**
@@ -665,7 +792,7 @@ final class BigDecimal implements \Stringable
      * @param bool         $isNegative  Whether the original value is negative
      * @param RoundingMode $mode        Rounding strategy
      */
-    private static function applyRounding(
+    private function applyRounding(
         string $absQuotient,
         bool $isNegative,
         RoundingMode $mode,
@@ -702,7 +829,67 @@ final class BigDecimal implements \Stringable
             return $truncated;
         }
 
-        return \gmp_strval(\gmp_add($truncated, '1'));
+        return $this->backend->add($truncated, '1');
+    }
+
+    /**
+     * Floor of the n-th root of a non-negative integer string ($n >= 2).
+     *
+     * Computed via Newton's method using only the primitives already on
+     * IntegerBackend (no backend-specific nth-root function is required),
+     * with a final direct-comparison correction pass that guarantees an
+     * exact floor regardless of Newton's off-by-one edge cases.
+     */
+    private function integerNthRoot(string $a, int $n): string
+    {
+        if ($a === '0') {
+            return '0';
+        }
+
+        // 10^ceil(digits(a) / n) always overestimates the true root: a has
+        // fewer digits than 10^(n * ceil(digits(a)/n)), so a^(1/n) is
+        // strictly less than 10^ceil(digits(a)/n).
+        $guessExponent = \intdiv(\strlen($a) + $n - 1, $n);
+        $x = $this->backend->pow('10', $guessExponent);
+
+        while (true) {
+            $xToNMinus1 = $this->backend->pow($x, $n - 1);
+            $next = $this->backend->divide(
+                $this->backend->add(
+                    $this->backend->multiply((string) ($n - 1), $x),
+                    $this->backend->divide($a, $xToNMinus1),
+                ),
+                (string) $n,
+            );
+
+            if ($this->backend->compare($next, $x) >= 0) {
+                break;
+            }
+
+            $x = $next;
+        }
+
+        while ($this->backend->compare($this->backend->pow($this->backend->add($x, '1'), $n), $a) <= 0) {
+            $x = $this->backend->add($x, '1');
+        }
+
+        while ($this->backend->compare($this->backend->pow($x, $n), $a) > 0) {
+            $x = $this->backend->subtract($x, '1');
+        }
+
+        return $x;
+    }
+
+    /**
+     * Greatest common divisor of two non-negative PHP integers (at least one non-zero).
+     */
+    private static function gcd(int $a, int $b): int
+    {
+        while ($b !== 0) {
+            [$a, $b] = [$b, $a % $b];
+        }
+
+        return $a;
     }
 
     /**

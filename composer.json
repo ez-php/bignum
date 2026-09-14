@@ -1,6 +1,6 @@
 {
   "name": "ez-php/bignum",
-  "version": "2.3.7",
+  "version": "2.3.8",
   "description": "Arbitrary-precision integer and decimal arithmetic for the ez-php ecosystem — immutable BigInteger and BigDecimal value objects backed by bcmath (gmp optional)",
   "type": "library",
   "license": "MIT",
@@ -18,10 +18,10 @@
   },
   "require": {
     "php": "^8.5",
-    "ext-gmp": "*"
+    "ext-bcmath": "*"
   },
   "suggest": {
-    "ext-bcmath": "Alternative integer arithmetic backend (BcMathBackend)"
+    "ext-gmp": "Faster arithmetic backend (GmpBackend), auto-selected when loaded"
   },
   "require-dev": {
     "ez-php/docker": "^2.0",

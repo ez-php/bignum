@@ -235,7 +235,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/bignum
 
-Arbitrary-precision integer and decimal arithmetic. Immutable value objects backed by `ext-bcmath` (always required) and optionally `ext-gmp` for faster integer operations.
+Arbitrary-precision integer and decimal arithmetic. Immutable value objects backed by `ext-bcmath` (always required). Both `BigInteger` and `BigDecimal` use a pluggable `IntegerBackend` that prefers `ext-gmp` (auto-selected when loaded) and falls back to `ext-bcmath` otherwise — each class holds its own default independently.
 
 ---
 
@@ -253,8 +253,9 @@ src/
     GmpBackend.php            — Faster optional backend using ext-gmp
 tests/
   TestCase.php                — Base test case (extends PHPUnit\Framework\TestCase directly)
-  BigIntegerTest.php          — Full coverage of BigInteger operations
-  BigDecimalTest.php          — Full coverage of BigDecimal operations and rounding
+  BigIntegerTest.php          — Full coverage of BigInteger operations (forces GmpBackend)
+  BigDecimalTest.php          — Full coverage of BigDecimal operations and rounding (forces GmpBackend)
+  BigDecimalBcMathTest.php    — BigDecimal arithmetic paths under BcMathBackend specifically
   RoundingModeTest.php        — Enum case assertions
   Backend/
     GmpBackendTest.php        — GmpBackend tests (requires ext-gmp)
@@ -287,16 +288,18 @@ Final, immutable value object representing an arbitrary-precision decimal.
 |---|---|
 | Storage | `$unscaledValue: string` (integer string) + `$scale: int` |
 | Invariant | `value = unscaledValue / 10^scale` |
-| Always bcmath | BigDecimal uses bcmath directly — no backend interface needed for decimal arithmetic |
-| Scale propagation | add/subtract → max scale; multiply → sum of scales; dividedBy → explicit scale |
+| Backend | `private readonly IntegerBackend $backend` — same pluggable backend as `BigInteger`, resolved once at construction, own independent default |
+| Scale propagation | add/subtract → max scale; multiply → sum of scales; dividedBy/nthRoot/powRational → explicit scale |
 
-`dividedBy(divisor, scale, RoundingMode)` is the primary division method. It computes an integer quotient with one extra digit of precision (for rounding) via pure bcmath integer arithmetic, then applies `applyRounding()`.
+`dividedBy(divisor, scale, RoundingMode)` is the primary division method. It computes an integer quotient with one extra digit of precision (for rounding) via the backend's `divide()`, then applies `applyRounding()`.
 
-`toScale(int, RoundingMode)` is the canonical implementation. `round()` is an alias.
+`sqrt(scale, RoundingMode)` is `nthRoot(2, scale, RoundingMode)`. `nthRoot(n, scale, RoundingMode)` computes the floor n-th root of the unscaled value at an intermediate scale — `max(scale + 1, ceil(this.scale / n))`, chosen so the operand is only ever scaled *up* before rooting, never truncated — via the private `integerNthRoot()` helper (Newton's method on `IntegerBackend` primitives only, no backend-specific root function), then rounds down to the target scale through `toScale()`. `powRational(numerator, denominator, scale, RoundingMode)` reduces the fraction by gcd first — an exact denominator-divides-numerator case (e.g. `4/2`) delegates straight to the exact integer `pow()`, ignoring `$scale` — otherwise computes `pow(numerator)->nthRoot(denominator, scale, mode)`, powering before rooting so any imprecision is introduced once, at the end, not compounded through an early root.
+
+`toScale(int, RoundingMode)` is the canonical rounding implementation, also used internally by `nthRoot()`. `round()` is an alias.
 
 ### IntegerBackend (`src/Backend/IntegerBackend.php`)
 
-Thin interface separating BigInteger from its arithmetic engine. Both backends accept and return normalized integer strings.
+Thin interface separating both `BigInteger` and `BigDecimal` from their arithmetic engine. Both backends accept and return normalized integer strings. `BigInteger` and `BigDecimal` each resolve and cache their own default backend independently (two separate static fields) — forcing one via `setDefaultBackend()` does not affect the other.
 
 - `BcMathBackend` — always available, uses standard `bcadd`, `bcsub`, `bcmul`, `bcdiv`, `bcmod`, `bcpow`, `bcsqrt`
 - `GmpBackend` — faster for large integers; uses `gmp_*` functions; `gmp_div_r(..., GMP_ROUND_ZERO)` matches bcmath's signed-remainder convention for `mod`
@@ -319,11 +322,15 @@ Pure enum with no methods. Seven cases as defined by standard decimal rounding c
 
 ## Design Decisions and Constraints
 
-- **BigDecimal internal representation** — Storing `(unscaledValue, scale)` rather than a decimal string keeps all arithmetic in the integer domain. It avoids repeated string parsing and makes operations like scale alignment (`scaleUp`) trivially correct with bcmath.
+- **BigDecimal internal representation** — Storing `(unscaledValue, scale)` rather than a decimal string keeps all arithmetic in the integer domain. It avoids repeated string parsing and makes operations like scale alignment (`scaleUp`) trivially correct via the backend.
 
-- **applyRounding is private** — Rounding logic is internal to `BigDecimal`. The algorithm: compute the quotient with one extra digit via `bcdiv(..., $scale + 1 digits)`, extract the last digit, apply the rounding rule, and add 1 to the truncated result if needed. Negative values are handled by working on the absolute value and re-applying the sign — this simplifies the match statement in `applyRounding`.
+- **Integer n-th root implemented in BigDecimal, not added to IntegerBackend** — `nthRoot()`/`powRational()` need a general n-th root, not just square root, but a `root(a, n)` method was deliberately not added to `IntegerBackend`: that interface is public (`setDefaultBackend()` accepts any implementation), so adding a method is a breaking change for any third-party backend; the Newton-based algorithm would still need writing and testing once either way; and a single backend-agnostic implementation, built only from `multiply`/`divide`/`add`/`subtract`/`pow`/`compare`, cannot silently diverge between `GmpBackend` and `BcMathBackend` the way two independent `root()` implementations could. `gmp_root()`/a bcmath equivalent stays available as a later behind-the-interface optimization if profiling ever shows `integerNthRoot()`'s Newton loop is a bottleneck — not needed at realistic scales (root degree ≤ a handful, scale ≤ tens of digits), since Newton converges quadratically.
 
-- **GmpBackend auto-detection** — `BigInteger::resolveBackend()` checks `extension_loaded('gmp')` once and caches the result in the static `$defaultBackend` field. This means the backend is transparent to callers unless overridden via `setDefaultBackend()`. Tests always call `setDefaultBackend(new BcMathBackend())` in `setUp()` to ensure deterministic backend selection.
+- **BigDecimal shares BigInteger's IntegerBackend instead of a separate DecimalBackend** — every operation BigDecimal needs (add, subtract, multiply, truncated divide, pow, abs, sqrt, compare) is already on `IntegerBackend`, since decimal arithmetic here is just integer arithmetic on the unscaled value plus scale bookkeeping. A second, near-identical interface would have been a premature abstraction; `BigDecimal` resolves and caches its own default backend the same way `BigInteger` does (own static field, own `setDefaultBackend()`/`getDefaultBackend()`), but the two are independent — forcing one doesn't affect the other.
+
+- **applyRounding is private and non-static** — Rounding logic is internal to `BigDecimal`, shared by `dividedBy`, `toScale`, and `sqrt`, and needs `$this->backend` for the final `add('1')` when rounding up. The algorithm: compute the quotient/root with one extra digit via the backend's integer arithmetic, extract the last digit, apply the rounding rule, and add 1 to the truncated result if needed. Negative values are handled by working on the absolute value and re-applying the sign — this simplifies the match statement in `applyRounding`.
+
+- **GmpBackend auto-detection** — `resolveBackend()` (present on both `BigInteger` and `BigDecimal`, not shared code — see above) checks `extension_loaded('gmp')` once per class and caches the result in that class's static `$defaultBackend` field. This means the backend is transparent to callers unless overridden via `setDefaultBackend()`. `BigIntegerTest` forces `GmpBackend`, `BigDecimalTest` forces `GmpBackend`, and `BigDecimalBcMathTest` forces `BcMathBackend` in `setUp()` — each of the three needed because a static default can otherwise leak its value across test classes depending on run order.
 
 - **No `UNNECESSARY` rounding mode** — Unlike brick/math, this library does not have an `UNNECESSARY` mode (which throws if rounding would occur). Adding it would complicate the `divide` convenience method and is an edge case. Users who need exact division should structure the call scale correctly before calling `dividedBy`.
 
@@ -340,9 +347,9 @@ Pure enum with no methods. Seven cases as defined by standard decimal rounding c
 ## Testing Approach
 
 - **No external infrastructure required** — All tests are in-process, pure PHP. No database, no Redis, no Docker needed to run the test suite locally via `vendor/bin/phpunit`.
-- **Force bcmath in BigInteger tests** — Each `BigIntegerTest` calls `BigInteger::setDefaultBackend(new BcMathBackend())` in `setUp()` to avoid non-determinism from auto-detected backends.
+- **Force a specific backend in every top-level test class** — `BigIntegerTest` and `BigDecimalTest` both call `setDefaultBackend(new GmpBackend())` in `setUp()`; `BigDecimalBcMathTest` calls `BigDecimal::setDefaultBackend(new BcMathBackend())`. This avoids non-determinism from auto-detection and from one test class's static default leaking into another via run order.
 - **GmpBackend tested separately** — `tests/Backend/GmpBackendTest.php` carries `#[RequiresPhpExtension('gmp')]` and is skipped automatically when GMP is not installed.
-- **BcMathBackend tested both directly and indirectly** — `tests/Backend/BcMathBackendTest.php` exercises the backend's own methods in isolation (mirroring `GmpBackendTest`'s cases, plus a negative-operand `gcd()` case specific to bcmath's absolute-value-then-Euclidean-algorithm implementation), in addition to the indirect coverage every `BigIntegerTest` already gets by forcing `setDefaultBackend(new BcMathBackend())`.
+- **BcMathBackend tested directly, indirectly (BigInteger), and via BigDecimal** — `tests/Backend/BcMathBackendTest.php` exercises the backend's own methods in isolation (mirroring `GmpBackendTest`'s cases, plus a negative-operand `gcd()` case specific to bcmath's absolute-value-then-Euclidean-algorithm implementation). `BigDecimalBcMathTest` is the only place bcmath-backed `BigDecimal` arithmetic (scale alignment, `dividedBy` rounding modes, `sqrt`, `toInt`) is exercised — `BigDecimalTest` forces `GmpBackend`, so without it that code path is untested even though `ext-bcmath` is the package's actual hard requirement.
 - **Rounding mode coverage** — `BigDecimalTest::testRoundingModes()` uses a data provider covering all seven modes for both positive and negative inputs, including the HALF_EVEN (banker's rounding) edge cases.
 - **Immutability** — Each test that chains operations also asserts the original instance is unchanged.
 - **`#[UsesClass]`** — Required because PHPUnit is configured with `beStrictAboutCoverageMetadata=false` globally, but individual modules may tighten this. Declare all indirectly used classes.
@@ -359,4 +366,4 @@ Pure enum with no methods. Seven cases as defined by standard decimal rounding c
 | Matrix / vector algebra | Separate dedicated package |
 | Statistical functions | Separate dedicated package |
 | Cryptographic key generation | Security module |
-| Trigonometric / transcendental functions | Out of scope (no bcmath support) |
+| Trigonometric / transcendental functions, irrational-exponent `pow()` | Out of scope: algebraic roots and rational exponents are supported (`sqrt()`, `nthRoot()`, `powRational()`); anything needing `ln`/`exp` (real-valued exponents, trig) is not, and won't be added under this package |

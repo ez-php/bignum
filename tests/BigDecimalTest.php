@@ -26,6 +26,14 @@ use PHPUnit\Framework\Attributes\UsesClass;
 #[RequiresPhpExtension('gmp')]
 final class BigDecimalTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        // Force GmpBackend so this suite is deterministic regardless of test
+        // order (BigDecimal's default backend is a shared static). See
+        // BigDecimalBcMathTest for the bcmath-forced equivalent.
+        BigDecimal::setDefaultBackend(new GmpBackend());
+    }
+
     // -------------------------------------------------------------------------
     // Factory
     // -------------------------------------------------------------------------
@@ -227,6 +235,121 @@ final class BigDecimalTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         BigDecimal::of('2')->pow(-1);
+    }
+
+    public function testSqrtOfPerfectSquare(): void
+    {
+        self::assertSame('3.0000', BigDecimal::of('9')->sqrt(4)->toString());
+    }
+
+    public function testSqrtRoundsToScale(): void
+    {
+        self::assertSame('1.4142', BigDecimal::of('2')->sqrt(4)->toString());
+    }
+
+    public function testSqrtRoundingModeIsRespected(): void
+    {
+        self::assertSame('1.4143', BigDecimal::of('2')->sqrt(4, RoundingMode::UP)->toString());
+    }
+
+    public function testSqrtOfZero(): void
+    {
+        self::assertSame('0.00', BigDecimal::of('0')->sqrt(2)->toString());
+    }
+
+    public function testSqrtOfNegativeThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('-4')->sqrt(2);
+    }
+
+    public function testSqrtNegativeScaleThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('4')->sqrt(-1);
+    }
+
+    public function testNthRootExactCubeRoot(): void
+    {
+        self::assertSame('2.0000', BigDecimal::of('8')->nthRoot(3, 4)->toString());
+    }
+
+    public function testNthRootNonExact(): void
+    {
+        self::assertSame('1.25992', BigDecimal::of('2')->nthRoot(3, 5)->toString());
+    }
+
+    public function testNthRootOfOneIsToScale(): void
+    {
+        self::assertSame(
+            BigDecimal::of('3.456')->toScale(2)->toString(),
+            BigDecimal::of('3.456')->nthRoot(1, 2)->toString(),
+        );
+    }
+
+    public function testNthRootOfZero(): void
+    {
+        self::assertSame('0.00', BigDecimal::of('0')->nthRoot(3, 2)->toString());
+    }
+
+    public function testNthRootOfNegativeThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('-8')->nthRoot(3, 2);
+    }
+
+    public function testNthRootDegreeLessThanOneThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('8')->nthRoot(0, 2);
+    }
+
+    public function testNthRootNegativeScaleThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('8')->nthRoot(3, -1);
+    }
+
+    public function testPowRationalExactWhenDenominatorDividesNumerator(): void
+    {
+        self::assertSame('16', BigDecimal::of('4')->powRational(4, 2, 2)->toString());
+    }
+
+    public function testPowRationalLargeIntermediateScale(): void
+    {
+        // 1.23^9 has scale 18 before rooting; regression case for a formula
+        // that would truncate the operand before taking the root.
+        self::assertSame('2.538476', BigDecimal::of('1.23')->powRational(9, 2, 6)->toString());
+    }
+
+    public function testPowRationalNumeratorZero(): void
+    {
+        self::assertSame('1', BigDecimal::of('5')->powRational(0, 3, 2)->toString());
+    }
+
+    public function testPowRationalNegativeNumeratorThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('2')->powRational(-1, 2, 2);
+    }
+
+    public function testPowRationalDenominatorLessThanOneThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('2')->powRational(1, 0, 2);
+    }
+
+    public function testPowRationalNegativeBaseWithFractionalExponentThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        BigDecimal::of('-4')->powRational(1, 2, 2);
+    }
+
+    public function testPowRationalNegativeBaseWithIntegerExponentIsAllowed(): void
+    {
+        // 4/2 reduces to the integer exponent 2, so this is an ordinary
+        // integer power and a negative base is fine: (-2)^2 = 4.
+        self::assertSame('4', BigDecimal::of('-2')->powRational(4, 2, 2)->toString());
     }
 
     public function testAbs(): void
