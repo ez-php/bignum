@@ -16,21 +16,33 @@ use EzPhp\BigNum\DivisionByZeroException;
  */
 final class GmpBackend implements IntegerBackend
 {
+    /**
+     * {@inheritDoc}
+     */
     public function add(string $a, string $b): string
     {
         return gmp_strval(gmp_add($a, $b));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function subtract(string $a, string $b): string
     {
         return gmp_strval(gmp_sub($a, $b));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function multiply(string $a, string $b): string
     {
         return gmp_strval(gmp_mul($a, $b));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function divide(string $a, string $b): string
     {
         if (gmp_cmp($b, '0') === 0) {
@@ -41,6 +53,9 @@ final class GmpBackend implements IntegerBackend
         return gmp_strval(gmp_div_q($a, $b, GMP_ROUND_ZERO));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function mod(string $a, string $b): string
     {
         if (gmp_cmp($b, '0') === 0) {
@@ -51,6 +66,9 @@ final class GmpBackend implements IntegerBackend
         return gmp_strval(gmp_div_r($a, $b, GMP_ROUND_ZERO));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function pow(string $base, int $exponent): string
     {
         if ($exponent < 0) {
@@ -60,21 +78,33 @@ final class GmpBackend implements IntegerBackend
         return gmp_strval(gmp_pow($base, $exponent));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function abs(string $a): string
     {
         return gmp_strval(gmp_abs($a));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function negate(string $a): string
     {
         return gmp_strval(gmp_neg($a));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function gcd(string $a, string $b): string
     {
         return gmp_strval(gmp_gcd($a, $b));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function sqrt(string $a): string
     {
         if (gmp_cmp($a, '0') < 0) {
@@ -85,6 +115,9 @@ final class GmpBackend implements IntegerBackend
         return gmp_strval(gmp_sqrt($a));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function compare(string $a, string $b): int
     {
         $cmp = gmp_cmp($a, $b);

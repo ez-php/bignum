@@ -102,6 +102,12 @@ final class GmpBackendTest extends TestCase
         self::assertSame('1', $this->backend->gcd('7', '13'));
     }
 
+    public function testGcdWithNegativeOperandsIsAlwaysPositive(): void
+    {
+        self::assertSame('6', $this->backend->gcd('-12', '18'));
+        self::assertSame('6', $this->backend->gcd('-12', '-18'));
+    }
+
     public function testSqrt(): void
     {
         self::assertSame('3', $this->backend->sqrt('9'));

@@ -34,21 +34,33 @@ final class BcMathBackend implements IntegerBackend
         return $v;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function add(string $a, string $b): string
     {
         return \bcadd(self::n($a), self::n($b), 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function subtract(string $a, string $b): string
     {
         return \bcsub(self::n($a), self::n($b), 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function multiply(string $a, string $b): string
     {
         return \bcmul(self::n($a), self::n($b), 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function divide(string $a, string $b): string
     {
         $nb = self::n($b);
@@ -60,6 +72,9 @@ final class BcMathBackend implements IntegerBackend
         return \bcdiv(self::n($a), $nb, 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function mod(string $a, string $b): string
     {
         $nb = self::n($b);
@@ -71,6 +86,9 @@ final class BcMathBackend implements IntegerBackend
         return \bcmod(self::n($a), $nb);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function pow(string $base, int $exponent): string
     {
         if ($exponent < 0) {
@@ -80,6 +98,9 @@ final class BcMathBackend implements IntegerBackend
         return \bcpow(self::n($base), (string) $exponent, 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function abs(string $a): string
     {
         $na = self::n($a);
@@ -87,6 +108,9 @@ final class BcMathBackend implements IntegerBackend
         return \bccomp($na, '0', 0) < 0 ? \bcsub('0', $na, 0) : $na;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function negate(string $a): string
     {
         $na = self::n($a);
@@ -98,6 +122,9 @@ final class BcMathBackend implements IntegerBackend
         return \bcsub('0', $na, 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function gcd(string $a, string $b): string
     {
         // Work with absolute values as numeric-string from the start
@@ -116,6 +143,9 @@ final class BcMathBackend implements IntegerBackend
         return $a;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function sqrt(string $a): string
     {
         $na = self::n($a);
@@ -134,6 +164,9 @@ final class BcMathBackend implements IntegerBackend
         return \bcdiv(self::n($withDecimal), '1', 0);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function compare(string $a, string $b): int
     {
         return \bccomp(self::n($a), self::n($b), 0);

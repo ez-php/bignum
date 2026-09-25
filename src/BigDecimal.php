@@ -628,6 +628,9 @@ final class BigDecimal implements \Stringable
         return $this->toDecimalString();
     }
 
+    /**
+     * Return the plain decimal string representation.
+     */
     public function __toString(): string
     {
         return $this->toDecimalString();

@@ -307,6 +307,9 @@ final class BigInteger implements \Stringable
         return $this->value;
     }
 
+    /**
+     * Return the integer as a decimal string.
+     */
     public function __toString(): string
     {
         return $this->value;
