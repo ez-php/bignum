@@ -11,6 +11,11 @@ namespace EzPhp\BigNum;
  */
 final class DivisionByZeroException extends \ArithmeticError
 {
+    /**
+     * DivisionByZeroException Constructor
+     *
+     * @param string $message
+     */
     public function __construct(string $message = 'Division by zero')
     {
         parent::__construct($message);
