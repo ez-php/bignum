@@ -151,7 +151,7 @@ php make_module.php <name> --description="..." --services=mysql,redis --extensio
 
 `<name>` is the kebab-case package name; the namespace is derived as
 `EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
-overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`,
+overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`, `asyncapi-ui` → `AsyncApiUi`,
 `bignum` → `BigNum`, `dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `graphql-subscriptions` → `GraphQLSubscriptions`, `oauth` → `OAuth`,
 `opcache` → `OPCache`, `openapi` → `OpenApi`, `qrcode` → `QrCode`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
 `websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
@@ -371,8 +371,6 @@ Pure enum with no methods. Seven cases as defined by standard decimal rounding c
 - **Normalization invariant** — `unscaledValue` never has leading zeros (except the string `"0"`). All factory methods and arithmetic operations enforce this via `normalizeUnscaled()`. This ensures that unscaled-value equality implies decimal equality at the same scale.
 
 - **Zero framework coupling** — No container, no service providers, no framework imports. The package is usable as a standalone Composer dependency.
-
----
 - **`BigDecimal` (~900 lines) is deliberately kept as one class.** It is an immutable value object; its length is the arithmetic and comparison surface (`add`/`subtract`/`multiply`/`divide`/`mod`/`pow`/`sqrt`/`nthRoot`/`powRational`/rounding, comparisons, conversions) plus a docblock on each method. All of it operates on the same private `unscaledValue`/`scale` pair, so splitting it would either leak that representation or add forwarding methods. The only separable block is the root/rational-power family (`sqrt`, `nthRoot`, `powRational`, ~130 lines); extract it into an internal `DecimalRoots` helper if that family grows (e.g. more transcendental functions), keeping the public methods on `BigDecimal`.
 
 
